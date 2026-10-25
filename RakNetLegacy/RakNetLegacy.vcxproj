@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32"><Configuration>Debug</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32"><Configuration>Release</Configuration><Platform>Win32</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{CE162A02-BD15-4B66-BB88-C7BF67484AE9}</ProjectGuid>
+    <RootNamespace>RakNetLegacy</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType><UseDebugLibraries>true</UseDebugLibraries><PlatformToolset>v145</PlatformToolset><CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType><UseDebugLibraries>false</UseDebugLibraries><PlatformToolset>v145</PlatformToolset><WholeProgramOptimization>true</WholeProgramOptimization><CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'"><OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir><IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir></PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'"><OutDir>$(SolutionDir)bin\$(Configuration)\</OutDir><IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\</IntDir></PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile><WarningLevel>Level3</WarningLevel><SDLCheck>true</SDLCheck><PreprocessorDefinitions>WIN32;_DEBUG;_LIB;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions><AdditionalIncludeDirectories>$(ProjectDir)..\third_party\raknet-legacy\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><LanguageStandard>stdcpp14</LanguageStandard><RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary><DisableSpecificWarnings>4018;4244;4267;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings></ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile><WarningLevel>Level3</WarningLevel><FunctionLevelLinking>true</FunctionLevelLinking><IntrinsicFunctions>true</IntrinsicFunctions><SDLCheck>true</SDLCheck><PreprocessorDefinitions>WIN32;NDEBUG;_RELEASE;_LIB;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions><AdditionalIncludeDirectories>$(ProjectDir)..\third_party\raknet-legacy\Source;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><LanguageStandard>stdcpp14</LanguageStandard><RuntimeLibrary>MultiThreaded</RuntimeLibrary><DisableSpecificWarnings>4018;4244;4267;4996;%(DisableSpecificWarnings)</DisableSpecificWarnings></ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\third_party\raknet-legacy\Source\BitStream.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\CheckSum.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\DataBlockEncryptor.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\DS_HuffmanEncodingTree.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\GetTime.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\Itoa.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\NetworkIDManager.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\NetworkIDObject.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\PluginInterface.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\RakMemoryOverride.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\RakNetStatistics.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\RakNetTypes.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\RakSleep.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\RakString.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\Rand.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\ReliabilityLayer.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\rijndael.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\SHA1.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\SimpleMutex.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\SocketLayer.cpp" />
+    <ClCompile Include="..\third_party\raknet-legacy\Source\StringCompressor.cpp" />
+    <ClCompile Include="SocketReceiveStub.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

@@ -1,0 +1,27 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.5.11723.231
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "WinterCat", "WinterCat\WinterCat.vcxproj", "{8F408BFC-7F03-416D-90E0-FF241EB3CFD2}"
+EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "RakNetLegacy", "RakNetLegacy\RakNetLegacy.vcxproj", "{CE162A02-BD15-4B66-BB88-C7BF67484AE9}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8F408BFC-7F03-416D-90E0-FF241EB3CFD2}.Debug|Win32.ActiveCfg = Debug|Win32
+		{8F408BFC-7F03-416D-90E0-FF241EB3CFD2}.Debug|Win32.Build.0 = Debug|Win32
+		{8F408BFC-7F03-416D-90E0-FF241EB3CFD2}.Release|Win32.ActiveCfg = Release|Win32
+		{8F408BFC-7F03-416D-90E0-FF241EB3CFD2}.Release|Win32.Build.0 = Release|Win32
+		{CE162A02-BD15-4B66-BB88-C7BF67484AE9}.Debug|Win32.ActiveCfg = Debug|Win32
+		{CE162A02-BD15-4B66-BB88-C7BF67484AE9}.Debug|Win32.Build.0 = Debug|Win32
+		{CE162A02-BD15-4B66-BB88-C7BF67484AE9}.Release|Win32.ActiveCfg = Release|Win32
+		{CE162A02-BD15-4B66-BB88-C7BF67484AE9}.Release|Win32.Build.0 = Release|Win32
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
