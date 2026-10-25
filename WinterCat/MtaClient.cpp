@@ -521,10 +521,8 @@ bool MtaClient::SendAcVerification()
 
     std::uint32_t acRoot = 1;
     auto it = resourceRoots_.find("province_ac");
-    if(it != resourceRoots_.end() && it->second != 0 && it->second != 0xFFFFFFFF)
+    if(it != resourceRoots_.end() && it->second != 0)
         acRoot = it->second;
-    else
-        std::cout << ">>> WARNING: province_ac root not found, using acRoot=" << acRoot << "\n";
 
     RakNet::BitStream payload;
     const std::string eventName = "radio:xnykuxcazgmqruzg";
@@ -575,13 +573,13 @@ bool MtaClient::SendAcVerification()
     const std::uint32_t mainItemCount = 18;
     payload.WriteCompressed(mainItemCount);
 
-        writeNumber(1); writeString("4D54F73E8D8F360F6FC2CEB9D4BB13A0");
-    writeNumber(2); writeNumber(1792178937);
+    writeNumber(1); writeString("26699A041A9A82B0D5227653C4888FDE");
+    writeNumber(2); writeNumber(1792685782);
     writeNumber(3); writeString("F84B670D281D1E2FAB59F44091B4DC11");
     writeNumber(4); writeNumber(1781684864);
-    writeNumber(5); writeString("22C5C367B0BA473FC5DDC9066E62AAFA");
-    writeNumber(6); writeString("9EB4E4E474ABD5DA2F3961A5EF549F9E");
-    writeNumber(7); writeString("CC9D5A9E5EE3F6E5E2DF9301E4CCA5E8");
+    writeNumber(5); writeString("none");
+    writeNumber(6); writeString("none");
+    writeNumber(7); writeString("none");
 
     writeNumber(8);
     payload.WriteBits(&kLuaTypeTable, 4, true);
@@ -777,16 +775,18 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
     if (eventName == "onLogin" || eventName == "LOGIN:showSuccess")
     {
         loggedIn_ = true;
-        if (elementId != 0 && elementId < 0x20000)
-        {
-            localElementId_ = elementId;
-            std::cout << ">>> Updated localElementId_ to " << localElementId_ << " from " << eventName << "\n";
-        }
         std::cout << "\n========================================\n";
         std::cout << ">>> SUCCESSFUL LOGIN! (" << eventName << " received)\n";
         std::cout << "========================================\n\n";
 
-                // Test: disabled documents:updatePlayerPermission and auth:accountCheck
+        // Required by Province_RP login_c.luac proto 0.30: triggerServerEvent("auth:accountCheck", resourceRoot)
+        auto itRp = resourceRoots_.find("Province_RP");
+        const std::uint32_t rpRoot = (itRp != resourceRoots_.end()) ? itRp->second : 0;
+        if (rpRoot != 0)
+        {
+            std::cout << ">>> Triggering auth:accountCheck on Province_RP root=" << rpRoot << "...\n";
+            TriggerServerEvent("auth:accountCheck", rpRoot, {});
+        }
     }
     else if (eventName == "province_camhunt:onClientRespawned" || eventName == "helper:showStartGUI")
     {
@@ -856,18 +856,16 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
     }
     else if (eventName == "auth:onClientOpenSpawpointSelector")
     {
-        if (elementId != 0 && elementId < 0x20000)
-        {
-            localElementId_ = elementId;
-            std::cout << ">>> Updated localElementId_ to " << localElementId_ << " from auth:onClientOpenSpawpointSelector\n";
-        }
         std::cout << "\n>>> SPAWN POINT SELECTOR OPENED (" << parsedStrings.size() << " args) on element=" << elementId << "\n";
 
         if (!spawnSelected_)
         {
-            spawnPending_ = true;
-            spawnPendingSince_ = std::chrono::steady_clock::now();
-            std::cout << ">>> Scheduled auth:onPlayerSelectSpawnPoint with 1.5s delay on localPlayer=" << localElementId_ << "...\n";
+            spawnSelected_ = true;
+            spawnPending_ = false;
+            std::cout << "\n========================================\n";
+            std::cout << ">>> Selecting 'lastpoint' via auth:onPlayerSelectSpawnPoint on localElement=" << localElementId_ << "...\n";
+            std::cout << "========================================\n\n";
+            TriggerServerEvent("auth:onPlayerSelectSpawnPoint", localElementId_, {"lastpoint"});
         }
     }
 }
@@ -883,38 +881,31 @@ bool MtaClient::SendPlayerResourceStart(std::uint16_t resourceNetId, std::uint32
 void MtaClient::HandleResourceStart(RakNet::BitStream& payload)
 {
     std::uint8_t nameLen = 0;
-    if(!payload.Read(nameLen) || nameLen == 0)
+    if(!payload.Read(nameLen) || payload.GetNumberOfUnreadBits() < (static_cast<BitSize_t>(nameLen) * 8u + 48u))
         return;
 
     std::string resName(nameLen, '\0');
-    if(!payload.Read(resName.data(), nameLen))
-        return;
+    if(nameLen > 0) payload.Read(resName.data(), nameLen);
+
+    std::uint32_t startCounter = 0;
+    payload.Read(startCounter);
 
     std::uint16_t resourceNetId = 0;
     payload.Read(resourceNetId);
 
     std::uint32_t resourceRootId = 0;
-    payload.ReadBits(reinterpret_cast<unsigned char*>(&resourceRootId), 17, true);
-    if(resourceRootId == 0x1FFFF)
-        resourceRootId = 0xFFFFFFFF;
+    if(payload.GetNumberOfUnreadBits() >= 17)
+        payload.ReadBits(reinterpret_cast<unsigned char*>(&resourceRootId), 17, true);
 
     std::uint32_t dynamicRootId = 0;
-    payload.ReadBits(reinterpret_cast<unsigned char*>(&dynamicRootId), 17, true);
-    if(dynamicRootId == 0x1FFFF)
-        dynamicRootId = 0xFFFFFFFF;
+    if(payload.GetNumberOfUnreadBits() >= 17)
+        payload.ReadBits(reinterpret_cast<unsigned char*>(&dynamicRootId), 17, true);
 
-    std::uint16_t minReq = 0;
-    payload.Read(minReq);
-
-    std::uint32_t startCounter = 0;
-    payload.Read(startCounter);
-
-    if(!resName.empty() && resourceRootId != 0xFFFFFFFF)
+    if(!resName.empty() && resourceRootId != 0)
         resourceRoots_[resName] = resourceRootId;
 
-    const auto unreadBits = payload.GetNumberOfUnreadBits();
     std::cout << "RESOURCE_START: name=\"" << resName << "\" netId=" << resourceNetId
-              << " counter=" << startCounter << " resRoot=" << resourceRootId << " dynRoot=" << dynamicRootId << " minReq=" << minReq << " unreadBits=" << unreadBits << "\n";
+              << " counter=" << startCounter << " resRoot=" << resourceRootId << " dynRoot=" << dynamicRootId << "\n";
     lastResourceStart_ = std::chrono::steady_clock::now();
 
     // Acknowledge resource start to server so the server marks this client as ready
@@ -948,35 +939,32 @@ void MtaClient::SendMaintenance()
         SendPlayerPureSync();
     }
 
-    if (spawnPending_ && !spawnSelected_ && now - spawnPendingSince_ >= 1500ms)
-    {
-        spawnPending_ = false;
-        spawnSelected_ = true;
-        std::cout << "\n========================================\n";
-        std::cout << ">>> Selecting 'lastpoint' via auth:onPlayerSelectSpawnPoint on localPlayer=" << localElementId_ << "...\n";
-        std::cout << "========================================\n\n";
-        TriggerServerEvent("auth:onPlayerSelectSpawnPoint", localElementId_, {"lastpoint"});
-    }
-
     if (!loggedIn_)
     {
-        // Wait until initial resources finish starting (at least 2.5s quiet time or 130+ resources started)
+        // Wait until ALL initial resources finish downloading and starting (at least 7s quiet time or 140+ resources started)
         const bool resourcesQuiet = lastResourceStart_.time_since_epoch().count() > 0 &&
-            ((resourceRoots_.size() >= 130 && now - lastResourceStart_ >= 2500ms) || (now - lastResourceStart_ >= 5000ms));
-        if (resourcesQuiet && !config_.loginUsername.empty())
+            ((resourceRoots_.size() >= 140 && now - lastResourceStart_ >= 2500ms) || (now - lastResourceStart_ >= 7000ms));
+        if (resourcesQuiet && provinceRpStarted_.time_since_epoch().count() > 0 && !config_.loginUsername.empty())
         {
-            if (lastLoginAttempt_.time_since_epoch().count() == 0 || (loginAttemptCount_ < 3 && now - lastLoginAttempt_ >= 10000ms))
+            if (lastLoginAttempt_.time_since_epoch().count() == 0 || (loginAttemptCount_ < 3 && now - lastLoginAttempt_ >= 15000ms))
             {
                 lastLoginAttempt_ = now;
                 loginAttemptCount_++;
 
                 std::cout << "\n=======================================================\n";
-                std::cout << ">>> ALL RESOURCES READY (" << resourceRoots_.size() << " started)! SENDING AUTH REQUEST (Attempt #" << loginAttemptCount_ << ")...\n";
+                std::cout << ">>> ALL RESOURCES READY! SENDING AUTH REQUEST (Attempt #" << loginAttemptCount_ << ")...\n";
                 std::cout << ">>> Target Username: " << config_.loginUsername << "\n";
                 std::cout << ">>> Target Password: " << (config_.loginPassword.empty() ? "(empty / check only)" : "******") << "\n";
                 std::cout << ">>> Local Element: " << localElementId_ << "\n";
                 std::cout << "=======================================================\n\n";
 
+                // Step 1: Send login:doRequest (Forgot Password check)
+                std::cout << ">>> Sending triggerServerEvent(\"login:doRequest\", localPlayer, \"" << config_.loginUsername << "\")...\n";
+                TriggerServerEvent("login:doRequest", localElementId_, {
+                    config_.loginUsername
+                });
+
+                // Step 2: Send onRequestLogin (buttonLogin in Province_RP login_c.luac)
                 const std::string passToSend = config_.loginPassword.empty() ? "test_invalid_pass_123" : config_.loginPassword;
                 std::cout << ">>> Sending triggerServerEvent(\"onRequestLogin\", localPlayer, \"" << config_.loginUsername << "\", \"" << passToSend << "\")...\n";
                 TriggerServerEvent("onRequestLogin", localElementId_, {
@@ -984,6 +972,18 @@ void MtaClient::SendMaintenance()
                     passToSend
                 });
 
+                // Also send on Province_RP resourceRoot in case event handler is attached to resourceRoot
+                auto itRp = resourceRoots_.find("Province_RP");
+                if (itRp != resourceRoots_.end() && itRp->second != 0)
+                {
+                    std::cout << ">>> Also sending onRequestLogin on Province_RP resourceRoot (" << itRp->second << ")...\n";
+                    TriggerServerEvent("onRequestLogin", itRp->second, {
+                        config_.loginUsername,
+                        passToSend
+                    });
+                }
+
+                // Step 3: Send onRequestRegConfirmation (Registration check)
                 std::cout << ">>> Sending triggerServerEvent(\"onRequestRegConfirmation\", localPlayer, \"checkacc@gmail.com\", \"" << config_.loginUsername << "\", \"" << passToSend << "\")...\n";
                 TriggerServerEvent("onRequestRegConfirmation", localElementId_, {
                     "checkacc@gmail.com",
@@ -1013,6 +1013,3 @@ void MtaClient::Fail(const std::string& reason)
     std::cerr << "FAILED: " << reason << '\n';
     state_ = State::Failed;
 }
-
-
-
