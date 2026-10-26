@@ -473,6 +473,30 @@ bool MtaClient::TriggerServerEvent(const std::string& eventName, std::uint32_t e
     return sent;
 }
 
+bool MtaClient::TriggerServerEventBool(const std::string& eventName, std::uint32_t elementId, bool boolArg)
+{
+    if(eventName.empty()) return false;
+
+    RakNet::BitStream payload;
+    const auto nameLen = static_cast<std::uint16_t>(eventName.size());
+    payload.WriteCompressed(nameLen);
+    payload.Write(eventName.data(), static_cast<unsigned int>(eventName.size()));
+
+    payload.WriteBits(reinterpret_cast<const unsigned char*>(&elementId), 17, true);
+
+    const std::uint32_t argCount = 1;
+    payload.WriteCompressed(argCount);
+
+    constexpr std::uint8_t kLuaTypeBoolean = 1;
+    payload.WriteBits(&kLuaTypeBoolean, 4, true);
+    payload.Write(boolArg);
+
+    const bool sent = SendMtaPacket(static_cast<std::uint8_t>(mta::PacketId::LuaEvent),
+        payload, HIGH_PRIORITY, RELIABLE_ORDERED, 0);
+    std::cout << "LUA_EVENT (bool) SENT: name=" << eventName << " element=" << elementId << " val=" << (boolArg ? "true" : "false") << " sent=" << sent << "\n";
+    return sent;
+}
+
 bool MtaClient::TriggerServerEventTable(const std::string& eventName, std::uint32_t elementId, const std::vector<std::pair<std::string, std::string>>& tableEntries)
 {
     if(eventName.empty()) return false;
@@ -570,24 +594,24 @@ bool MtaClient::SendAcVerification()
     // [8] = sub-table { [1]=true, [2]=true, [3]=true }
     // [9] = true
     payload.WriteBits(&kLuaTypeTable, 4, true);
-    const std::uint32_t mainItemCount = 18;
+    const std::uint32_t mainItemCount = 12;
     payload.WriteCompressed(mainItemCount);
 
     writeNumber(1); writeString("26699A041A9A82B0D5227653C4888FDE");
     writeNumber(2); writeNumber(1792685782);
     writeNumber(3); writeString("F84B670D281D1E2FAB59F44091B4DC11");
     writeNumber(4); writeNumber(1781684864);
-    writeNumber(5); writeString("none");
-    writeNumber(6); writeString("none");
-    writeNumber(7); writeString("none");
+    // none
+    // none
+    // none
 
     writeNumber(8);
     payload.WriteBits(&kLuaTypeTable, 4, true);
     const std::uint32_t subItemCount = 6;
     payload.WriteCompressed(subItemCount);
-    writeNumber(1); writeBool(true);
-    writeNumber(2); writeBool(true);
-    writeNumber(3); writeBool(true);
+    writeNumber(1); writeBool(false);
+    writeNumber(2); writeBool(false);
+    writeNumber(3); writeBool(false);
 
     writeNumber(9);
     writeBool(true);
@@ -916,6 +940,61 @@ void MtaClient::HandleResourceStart(RakNet::BitStream& payload)
         std::cout << ">>> province_ac resource started, sending AC verification immediately...\n";
         SendAcVerification();
     }
+    else if (resName == "bone_attach" && resourceRootId != 0)
+    {
+        TriggerServerEvent("boneAttach_requestAttachmentData", resourceRootId, {});
+    }
+    else if (resName == "scoreboard")
+    {
+        TriggerServerEvent("onClientDXScoreboardResourceStart", 1, {});
+        TriggerServerEvent("requestServerInfo", 1, {});
+    }
+    else if (resName == "province_lifts" && resourceRootId != 0)
+    {
+        TriggerServerEvent("lift:elevatorInit", resourceRootId, {});
+    }
+    else if (resName == "province_cs" && resourceRootId != 0)
+    {
+        TriggerServerEvent("province_cs:onRequestUpdateData", resourceRootId, {});
+        TriggerServerEvent("province_cs:onRequestUpdateShopCS", resourceRootId, {});
+    }
+    else if (resName == "province_afktimer" && resourceRootId != 0)
+    {
+        TriggerServerEventBool("afktimer:toggleAFK", resourceRootId, false);
+    }
+    else if (resName == "province_carshop" && resourceRootId != 0)
+    {
+        TriggerServerEvent("onOpenGui", resourceRootId, {});
+        TriggerServerEvent("carshop:requestCarPlateSlots", resourceRootId, {});
+    }
+    else if (resName == "admin" && localElementId_ != ((1u << 17) - 1u))
+    {
+        TriggerServerEvent("aPermissions", localElementId_, {});
+    }
+    else if (resName == "demprovince" && resourceRootId != 0)
+    {
+        TriggerServerEvent("requestLODsClient", resourceRootId, {});
+    }
+    else if (resName == "province_realdriveby" && localElementId_ != ((1u << 17) - 1u))
+    {
+        TriggerServerEvent("driveby_clientScriptLoaded", localElementId_, {});
+    }
+    else if (resName == "province_bank" && resourceRootId != 0)
+    {
+        TriggerServerEvent("bank:reqestAccountInfo", resourceRootId, {});
+    }
+    else if (resName == "province_donate" && resourceRootId != 0)
+    {
+        TriggerServerEvent("donate:requestBonus", resourceRootId, {});
+    }
+    else if (resName == "province_garage" && resourceRootId != 0)
+    {
+        TriggerServerEvent("garage:initOnStart", resourceRootId, {});
+    }
+    else if (resName == "Province_RP" && resourceRootId != 0)
+    {
+        TriggerServerEvent("houses:request_getOwnedHouses", resourceRootId, {});
+    }
     if (resName == "province_auth" || resName == "Province_RP")
     {
         provinceRpStarted_ = std::chrono::steady_clock::now();
@@ -959,10 +1038,10 @@ void MtaClient::SendMaintenance()
                 std::cout << "=======================================================\n\n";
 
                 // Step 1: Send login:doRequest (Forgot Password check)
-                std::cout << ">>> Sending triggerServerEvent(\"login:doRequest\", localPlayer, \"" << config_.loginUsername << "\")...\n";
-                TriggerServerEvent("login:doRequest", localElementId_, {
-                    config_.loginUsername
-                });
+                // login:doRequest skipped
+                /* // TriggerServerEvent("login:doRequest", localElementId_, {
+                    // config_.loginUsername
+                }); */
 
                 // Step 2: Send onRequestLogin (buttonLogin in Province_RP login_c.luac)
                 const std::string passToSend = config_.loginPassword.empty() ? "test_invalid_pass_123" : config_.loginPassword;
@@ -977,19 +1056,19 @@ void MtaClient::SendMaintenance()
                 if (itRp != resourceRoots_.end() && itRp->second != 0)
                 {
                     std::cout << ">>> Also sending onRequestLogin on Province_RP resourceRoot (" << itRp->second << ")...\n";
-                    TriggerServerEvent("onRequestLogin", itRp->second, {
+                    /* // TriggerServerEvent("onRequestLogin", itRp->second, {
                         config_.loginUsername,
                         passToSend
-                    });
+                    }); */
                 }
 
                 // Step 3: Send onRequestRegConfirmation (Registration check)
                 std::cout << ">>> Sending triggerServerEvent(\"onRequestRegConfirmation\", localPlayer, \"checkacc@gmail.com\", \"" << config_.loginUsername << "\", \"" << passToSend << "\")...\n";
-                TriggerServerEvent("onRequestRegConfirmation", localElementId_, {
+                /* // TriggerServerEvent("onRequestRegConfirmation", localElementId_, {
                     "checkacc@gmail.com",
                     config_.loginUsername,
                     passToSend
-                });
+                }); */
             }
         }
     }

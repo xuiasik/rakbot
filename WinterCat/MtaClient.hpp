@@ -44,6 +44,7 @@ private:
     bool SendPlayerPureSync();
     bool SendLatentLuaEventReserveHeader(const std::string& eventName);
     bool TriggerServerEvent(const std::string& eventName, std::uint32_t elementId, const std::vector<std::string>& stringArgs);
+    bool TriggerServerEventBool(const std::string& eventName, std::uint32_t elementId, bool boolArg);
     bool TriggerServerEventTable(const std::string& eventName, std::uint32_t elementId, const std::vector<std::pair<std::string, std::string>>& tableEntries);
     bool SendPlayerResourceStart(std::uint16_t resourceNetId, std::uint32_t startCounter);
     bool SendAcVerification();
