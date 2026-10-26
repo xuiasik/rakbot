@@ -1609,10 +1609,12 @@ void MtaClient::HandleResourceStart(RakNet::BitStream& payload)
         std::cout << ">>> province_ac resource started, sending AC verification immediately...\n";
         SendAcVerification();
         std::cout << "\n==================================================================\n";
-        std::cout << ">>> AC VERIFICATION SENT! CONSOLE READY FOR YOUR TRIGGERS\n";
-        std::cout << ">>> Type e.g.: triggerServerEvent(\"...\") or type 'help'\n";
+        std::cout << ">>> AC VERIFICATION SENT! INTERACTIVE CONSOLE READY\n";
+        std::cout << ">>> Only 'radio:xnykuxcazgmqruzg' was sent automatically.\n";
+        std::cout << ">>> All other triggers are awaiting manual input in console!\n";
         std::cout << "==================================================================\n\n";
     }
+    /* // Optional gameplay resource triggers (disabled so you can trigger them manually via console):
     else if (resName == "bone_attach" && resourceRootId != 0)
     {
         TriggerServerEvent("boneAttach_requestAttachmentData", resourceRootId, {});
@@ -1668,6 +1670,7 @@ void MtaClient::HandleResourceStart(RakNet::BitStream& payload)
     {
         TriggerServerEvent("houses:request_getOwnedHouses", resourceRootId, {});
     }
+    */
     if (resName == "province_auth" || resName == "Province_RP")
     {
         provinceRpStarted_ = std::chrono::steady_clock::now();
@@ -1717,12 +1720,12 @@ void MtaClient::SendMaintenance()
                 }); */
 
                 // Step 2: Send onRequestLogin (buttonLogin in Province_RP login_c.luac)
-                const std::string passToSend = config_.loginPassword.empty() ? "test_invalid_pass_123" : config_.loginPassword;
+                /* const std::string passToSend = config_.loginPassword.empty() ? "test_invalid_pass_123" : config_.loginPassword;
                 std::cout << ">>> Sending triggerServerEvent(\"onRequestLogin\", localPlayer, \"" << config_.loginUsername << "\", \"" << passToSend << "\")...\n";
                 TriggerServerEvent("onRequestLogin", localElementId_, {
                     config_.loginUsername,
                     passToSend
-                });
+                }); */
 
                 // Also send on Province_RP resourceRoot in case event handler is attached to resourceRoot
                 auto itRp = resourceRoots_.find("Province_RP");
@@ -1736,12 +1739,7 @@ void MtaClient::SendMaintenance()
                 }
 
                 // Step 3: Send onRequestRegConfirmation (Registration check)
-                std::cout << ">>> Sending triggerServerEvent(\"onRequestRegConfirmation\", localPlayer, \"checkacc@gmail.com\", \"" << config_.loginUsername << "\", \"" << passToSend << "\")...\n";
-                /* // TriggerServerEvent("onRequestRegConfirmation", localElementId_, {
-                    "checkacc@gmail.com",
-                    config_.loginUsername,
-                    passToSend
-                }); */
+                // skipped for interactive mode
             }
         }
     }
