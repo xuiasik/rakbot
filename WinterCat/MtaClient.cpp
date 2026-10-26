@@ -145,12 +145,13 @@ int MtaClient::Run()
         if (state_ == State::Maintained && !config_.transportOnly)
             SendMaintenance();
 
-        if (config_.holdSeconds && joined_ != std::chrono::steady_clock::time_point{} && now - joined_ >= std::chrono::seconds(config_.holdSeconds))
+        // Hold timer completely disabled - keep connection open indefinitely until user stops the client
+        /* if (config_.holdSeconds && joined_ != std::chrono::steady_clock::time_point{} && now - joined_ >= std::chrono::seconds(config_.holdSeconds))
         {
             std::cout << "hold interval completed\n";
             transport_.Disconnect();
             return 0;
-        }
+        } */
         std::this_thread::sleep_for(1ms);
     }
     if(stopRequested_)
