@@ -1131,6 +1131,34 @@ void MtaClient::ExecuteConsoleCommand(const std::string& rawCmd)
         return;
     }
 
+    if (cmd.starts_with("code ") || cmd.starts_with("sec ") || cmd.starts_with("2fa "))
+    {
+        std::string code = StripQuotes(Trim(cmd.substr(cmd.find(' ') + 1)));
+        std::cout << "[CONSOLE] >>> Sending login:checkSecCode and login:check2FA with code=" << code << "...\n";
+        TriggerServerEvent("login:checkSecCode", localElementId_, {code});
+        TriggerServerEvent("login:check2FA", localElementId_, {code});
+        return;
+    }
+
+    // Direct 6-digit code support (e.g. user just pastes "843917")
+    if (cmd.size() == 6 && std::all_of(cmd.begin(), cmd.end(), ::isdigit))
+    {
+        std::cout << "[CONSOLE] >>> Sending 6-digit email confirmation code: " << cmd << "...\n";
+        TriggerServerEvent("login:checkSecCode", localElementId_, {cmd});
+        TriggerServerEvent("login:check2FA", localElementId_, {cmd});
+        return;
+    }
+
+    if (cmd.starts_with("spawn ") || cmd == "spawn")
+    {
+        std::string pt = "lastpoint";
+        if (cmd.starts_with("spawn "))
+            pt = StripQuotes(Trim(cmd.substr(6)));
+        std::cout << "[CONSOLE] >>> Manually sending auth:onPlayerSelectSpawnPoint with point=" << pt << " on localElement=" << localElementId_ << "...\n";
+        TriggerServerEvent("auth:onPlayerSelectSpawnPoint", localElementId_, {pt});
+        return;
+    }
+
     bool isLuaFunc = false;
     std::string work = cmd;
     if (work.starts_with("triggerServerEvent") || work.starts_with("TriggerServerEvent"))
@@ -1462,16 +1490,27 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
     else if (eventName == "login:2FA" || eventName == "login:secureCode")
     {
         std::cout << "\n=======================================================\n";
-        std::cout << ">>> === [SERVER AUTH RESPONSE: 2FA / SECURE CODE REQUIRED! (" << eventName << ")] ===\n";
+        std::cout << ">>> === [SERVER AUTH: 2FA / EMAIL CODE REQUIRED! (" << eventName << ")] ===\n";
+        std::cout << ">>> Type: code <123456> or just enter the 6 digits directly in console!\n";
         std::cout << "=======================================================\n\n";
     }
 
     if (eventName == "onLogin" || eventName == "LOGIN:showSuccess")
     {
         loggedIn_ = true;
+        if (elementId != 0 && elementId != 0xFFFFFFFF && elementId != 1)
+        {
+            std::cout << ">>> Updating localPlayer elementId from " << localElementId_ << " to " << elementId << "\n";
+            localElementId_ = elementId;
+        }
+
         std::cout << "\n========================================\n";
-        std::cout << ">>> SUCCESSFUL LOGIN! (" << eventName << " received)\n";
+        std::cout << ">>> SUCCESSFUL LOGIN! (" << eventName << " received on element=" << elementId << ")\n";
         std::cout << "========================================\n\n";
+
+        // Required on onLogin by province_documents:
+        std::cout << ">>> Triggering documents:updatePlayerPermission on localElement=" << localElementId_ << "...\n";
+        TriggerServerEvent("documents:updatePlayerPermission", localElementId_, {});
 
         // Required by Province_RP login_c.luac proto 0.30: triggerServerEvent("auth:accountCheck", resourceRoot)
         auto itRp = resourceRoots_.find("Province_RP");
@@ -1480,6 +1519,12 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
         {
             std::cout << ">>> Triggering auth:accountCheck on Province_RP root=" << rpRoot << "...\n";
             TriggerServerEvent("auth:accountCheck", rpRoot, {});
+        }
+
+        auto itShop = resourceRoots_.find("province_carshop");
+        if (itShop != resourceRoots_.end() && itShop->second != 0)
+        {
+            TriggerServerEvent("carshop:requestCarPlateSlots", itShop->second, {});
         }
     }
     else if (eventName == "province_camhunt:onClientRespawned" || eventName == "helper:showStartGUI")
@@ -1542,17 +1587,17 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
     }
     else if (eventName == "auth:onClientOpenSpawpointSelector")
     {
-        std::cout << "\n>>> SPAWN POINT SELECTOR OPENED (" << parsedStrings.size() << " args) on element=" << elementId << "\n";
-
-        if (!spawnSelected_)
+        if (elementId != 0 && elementId != 0xFFFFFFFF && elementId != 1)
         {
-            spawnSelected_ = true;
-            spawnPending_ = false;
-            std::cout << "\n========================================\n";
-            std::cout << ">>> Selecting 'lastpoint' via auth:onPlayerSelectSpawnPoint on localElement=" << localElementId_ << "...\n";
-            std::cout << "========================================\n\n";
-            TriggerServerEvent("auth:onPlayerSelectSpawnPoint", localElementId_, {"lastpoint"});
+            std::cout << ">>> Updating localPlayer elementId from " << localElementId_ << " to " << elementId << "\n";
+            localElementId_ = elementId;
         }
+
+        std::cout << "\n=======================================================\n";
+        std::cout << ">>> SPAWN POINT SELECTOR OPENED (" << parsedStrings.size() << " args) on element=" << elementId << "\n";
+        std::cout << ">>> AUTO-SPAWN IS DISABLED! Holding connection.\n";
+        std::cout << ">>> To spawn manually later, type: spawn lastpoint (or spawn railway)\n";
+        std::cout << "=======================================================\n\n";
     }
 }
 
