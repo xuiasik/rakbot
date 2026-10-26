@@ -1517,19 +1517,12 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
     }
     else if (eventName == "login:clientAccountFound")
     {
-        std::cout << "\n>>> ACCOUNT FOUND ON SERVER! Sending onRequestLogin...\n\n";
-        TriggerServerEvent("onRequestLogin", localElementId_, {config_.loginUsername, config_.loginPassword});
+        std::cout << "\n>>> ACCOUNT FOUND ON SERVER (login:clientAccountFound)\n\n";
     }
     else if (eventName == "onClientLoginPanel")
     {
         std::string panelSheet = parsedStrings.empty() ? "" : parsedStrings[0];
         std::cout << ">>> onClientLoginPanel received: sheet=" << panelSheet << "\n";
-        if (panelSheet == "LOGIN")
-        {
-            std::cout << ">>> Server opened LOGIN panel, sending login:doRequest and onRequestLogin on localElement=" << localElementId_ << "...\n";
-            TriggerServerEvent("login:doRequest", localElementId_, {config_.loginUsername});
-            TriggerServerEvent("onRequestLogin", localElementId_, {config_.loginUsername, config_.loginPassword});
-        }
     }
     else if (eventName == "login:sendError" || eventName == "login:clientError" || eventName == "LOGIN:showError" || eventName == "login:errorCode")
     {
@@ -1540,8 +1533,7 @@ void MtaClient::HandleLuaEvent(RakNet::BitStream& payload)
     }
     else if (eventName == "login:regAccFound" || eventName == "login:successfulCode")
     {
-        std::cout << "\n>>> REGISTRATION CODE ACCEPTED! Sending onRequestRegister...\n\n";
-        TriggerServerEvent("onRequestRegister", localElementId_, {"eeeiibie8@gmail.com", config_.loginUsername, config_.loginPassword, "Alex", "Bondar", "1", "1"});
+        std::cout << "\n>>> REGISTRATION CODE ACCEPTED! (" << eventName << ")\n\n";
     }
     else if (eventName == "login:2FA" || eventName == "LOGIN:onTwoFaResponse")
     {
@@ -1693,58 +1685,6 @@ void MtaClient::SendMaintenance()
         lastPureSync_ = now;
         SendPlayerPureSync();
     }
-
-    if (!loggedIn_)
-    {
-        // Wait until ALL initial resources finish downloading and starting (at least 7s quiet time or 140+ resources started)
-        const bool resourcesQuiet = lastResourceStart_.time_since_epoch().count() > 0 &&
-            ((resourceRoots_.size() >= 140 && now - lastResourceStart_ >= 2500ms) || (now - lastResourceStart_ >= 7000ms));
-        if (resourcesQuiet && provinceRpStarted_.time_since_epoch().count() > 0 && !config_.loginUsername.empty())
-        {
-            if (lastLoginAttempt_.time_since_epoch().count() == 0 || (loginAttemptCount_ < 3 && now - lastLoginAttempt_ >= 15000ms))
-            {
-                lastLoginAttempt_ = now;
-                loginAttemptCount_++;
-
-                std::cout << "\n=======================================================\n";
-                std::cout << ">>> ALL RESOURCES READY! SENDING AUTH REQUEST (Attempt #" << loginAttemptCount_ << ")...\n";
-                std::cout << ">>> Target Username: " << config_.loginUsername << "\n";
-                std::cout << ">>> Target Password: " << (config_.loginPassword.empty() ? "(empty / check only)" : "******") << "\n";
-                std::cout << ">>> Local Element: " << localElementId_ << "\n";
-                std::cout << "=======================================================\n\n";
-
-                // Step 1: Send login:doRequest (Forgot Password check)
-                // login:doRequest skipped
-                /* // TriggerServerEvent("login:doRequest", localElementId_, {
-                    // config_.loginUsername
-                }); */
-
-                // Step 2: Send onRequestLogin (buttonLogin in Province_RP login_c.luac)
-                /* const std::string passToSend = config_.loginPassword.empty() ? "test_invalid_pass_123" : config_.loginPassword;
-                std::cout << ">>> Sending triggerServerEvent(\"onRequestLogin\", localPlayer, \"" << config_.loginUsername << "\", \"" << passToSend << "\")...\n";
-                TriggerServerEvent("onRequestLogin", localElementId_, {
-                    config_.loginUsername,
-                    passToSend
-                }); */
-
-                // Also send on Province_RP resourceRoot in case event handler is attached to resourceRoot
-                auto itRp = resourceRoots_.find("Province_RP");
-                if (itRp != resourceRoots_.end() && itRp->second != 0)
-                {
-                    std::cout << ">>> Also sending onRequestLogin on Province_RP resourceRoot (" << itRp->second << ")...\n";
-                    /* // TriggerServerEvent("onRequestLogin", itRp->second, {
-                        config_.loginUsername,
-                        passToSend
-                    }); */
-                }
-
-                // Step 3: Send onRequestRegConfirmation (Registration check)
-                // skipped for interactive mode
-            }
-        }
-    }
-
-
 }
 
 void MtaClient::Trace(const std::vector<std::uint8_t>& packet) const
