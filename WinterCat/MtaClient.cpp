@@ -115,6 +115,9 @@ int MtaClient::Run()
         return 2;
     }
 
+    if (config_.instances <= 1)
+        StartConsoleThread();
+
     while (state_ != State::Failed && !stopRequested_)
     {
         transport_.Poll();
@@ -130,6 +133,8 @@ int MtaClient::Run()
             Trace(packet);
             HandlePacket(packet);
         }
+
+        ProcessConsoleCommands();
 
         const auto now = std::chrono::steady_clock::now();
         if (state_ == State::Connecting && now - started_ > std::chrono::milliseconds(config_.connectTimeoutMs))
@@ -537,6 +542,670 @@ bool MtaClient::TriggerServerEventTable(const std::string& eventName, std::uint3
     return sent;
 }
 
+static void WriteLuaValue(RakNet::BitStream& bs, const LuaValue& val)
+{
+    switch (val.type)
+    {
+    case LuaValueType::Nil:
+    {
+        constexpr std::uint8_t kLuaTypeNil = 0;
+        bs.WriteBits(&kLuaTypeNil, 4, true);
+        break;
+    }
+    case LuaValueType::Boolean:
+    {
+        constexpr std::uint8_t kLuaTypeBoolean = 1;
+        bs.WriteBits(&kLuaTypeBoolean, 4, true);
+        bs.Write(val.boolVal);
+        break;
+    }
+    case LuaValueType::Element:
+    {
+        constexpr std::uint8_t kLuaTypeElement = 2;
+        bs.WriteBits(&kLuaTypeElement, 4, true);
+        bs.WriteBits(reinterpret_cast<const unsigned char*>(&val.elementVal), 17, true);
+        break;
+    }
+    case LuaValueType::NumberInt:
+    {
+        constexpr std::uint8_t kLuaTypeNumber = 3;
+        bs.WriteBits(&kLuaTypeNumber, 4, true);
+        const bool isFloat = false;
+        bs.Write(isFloat);
+        bs.WriteCompressed(val.intVal);
+        break;
+    }
+    case LuaValueType::NumberFloat:
+    {
+        constexpr std::uint8_t kLuaTypeNumber = 3;
+        bs.WriteBits(&kLuaTypeNumber, 4, true);
+        const bool isFloat = true;
+        bs.Write(isFloat);
+        const bool isDouble = false;
+        bs.Write(isDouble);
+        const float f = static_cast<float>(val.floatVal);
+        bs.Write(f);
+        break;
+    }
+    case LuaValueType::String:
+    {
+        constexpr std::uint8_t kLuaTypeString = 4;
+        bs.WriteBits(&kLuaTypeString, 4, true);
+        const auto len = static_cast<std::uint16_t>(val.strVal.size());
+        bs.WriteCompressed(len);
+        if (len > 0)
+            bs.Write(val.strVal.data(), static_cast<unsigned int>(val.strVal.size()));
+        break;
+    }
+    case LuaValueType::Table:
+    {
+        constexpr std::uint8_t kLuaTypeTable = 5;
+        bs.WriteBits(&kLuaTypeTable, 4, true);
+        const auto itemCount = static_cast<std::uint32_t>(val.tablePairs.size() * 2);
+        bs.WriteCompressed(itemCount);
+        for (const auto& pair : val.tablePairs)
+        {
+            WriteLuaValue(bs, pair.first);
+            WriteLuaValue(bs, pair.second);
+        }
+        break;
+    }
+    }
+}
+
+bool MtaClient::TriggerServerEventDynamic(const std::string& eventName, std::uint32_t elementId, const std::vector<LuaValue>& args)
+{
+    if (eventName.empty()) return false;
+
+    RakNet::BitStream payload;
+    const auto nameLen = static_cast<std::uint16_t>(eventName.size());
+    payload.WriteCompressed(nameLen);
+    payload.Write(eventName.data(), static_cast<unsigned int>(eventName.size()));
+
+    payload.WriteBits(reinterpret_cast<const unsigned char*>(&elementId), 17, true);
+
+    const auto argCount = static_cast<std::uint32_t>(args.size());
+    payload.WriteCompressed(argCount);
+
+    for (const auto& arg : args)
+    {
+        WriteLuaValue(payload, arg);
+    }
+
+    const bool sent = SendMtaPacket(static_cast<std::uint8_t>(mta::PacketId::LuaEvent),
+        payload, HIGH_PRIORITY, RELIABLE_ORDERED, 0);
+
+    std::cout << "[CONSOLE] >>> LUA_EVENT SENT: name=\"" << eventName << "\" element=" << elementId << " args=" << args.size() << " sent=" << (sent ? "OK" : "FAILED") << "\n";
+    return sent;
+}
+
+namespace
+{
+std::string Trim(std::string s)
+{
+    if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEF &&
+        static_cast<unsigned char>(s[1]) == 0xBB && static_cast<unsigned char>(s[2]) == 0xBF)
+    {
+        s = s.substr(3);
+    }
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n'))
+        s.pop_back();
+    return s;
+}
+
+std::string StripQuotes(std::string s)
+{
+    s = Trim(s);
+    if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
+        return s.substr(1, s.size() - 2);
+    return s;
+}
+
+std::vector<std::string> SplitArgs(const std::string& str)
+{
+    std::vector<std::string> tokens;
+    std::string current;
+    int braceDepth = 0;
+    bool inQuote = false;
+    char quoteChar = 0;
+
+    for (size_t i = 0; i < str.size(); ++i)
+    {
+        char c = str[i];
+
+        if (!inQuote && c == '-' && i + 1 < str.size() && str[i + 1] == '-')
+        {
+            if (i + 3 < str.size() && str[i + 2] == '[' && str[i + 3] == '[')
+            {
+                size_t endComment = str.find("]]", i + 4);
+                if (endComment != std::string::npos)
+                {
+                    i = endComment + 1;
+                    continue;
+                }
+            }
+            break;
+        }
+
+        if (inQuote)
+        {
+            current += c;
+            if (c == '\\' && i + 1 < str.size())
+            {
+                current += str[++i];
+            }
+            else if (c == quoteChar)
+            {
+                inQuote = false;
+            }
+            continue;
+        }
+
+        if (c == '"' || c == '\'')
+        {
+            inQuote = true;
+            quoteChar = c;
+            current += c;
+            continue;
+        }
+
+        if (c == '{')
+        {
+            braceDepth++;
+            current += c;
+            continue;
+        }
+        if (c == '}')
+        {
+            if (braceDepth > 0) braceDepth--;
+            current += c;
+            continue;
+        }
+
+        if (braceDepth == 0)
+        {
+            if (c == ',' || c == ' ' || c == '\t')
+            {
+                std::string trimmed = Trim(current);
+                if (!trimmed.empty())
+                {
+                    tokens.push_back(trimmed);
+                    current.clear();
+                }
+                continue;
+            }
+        }
+
+        current += c;
+    }
+
+    std::string trimmed = Trim(current);
+    if (!trimmed.empty())
+        tokens.push_back(trimmed);
+
+    return tokens;
+}
+
+size_t FindTopLevelEqual(const std::string& s)
+{
+    int braceDepth = 0;
+    bool inQuote = false;
+    char quoteChar = 0;
+    for (size_t i = 0; i < s.size(); ++i)
+    {
+        char c = s[i];
+        if (inQuote)
+        {
+            if (c == '\\' && i + 1 < s.size()) i++;
+            else if (c == quoteChar) inQuote = false;
+            continue;
+        }
+        if (c == '"' || c == '\'') { inQuote = true; quoteChar = c; continue; }
+        if (c == '{') { braceDepth++; continue; }
+        if (c == '}') { if (braceDepth > 0) braceDepth--; continue; }
+        if (braceDepth == 0 && c == '=')
+            return i;
+    }
+    return std::string::npos;
+}
+}
+
+std::uint32_t MtaClient::FindResourceRoot(const std::string& eventName)
+{
+    std::string prefix;
+    size_t col = eventName.find(':');
+    if (col != std::string::npos)
+        prefix = eventName.substr(0, col);
+    else
+    {
+        size_t under = eventName.find('_');
+        if (under != std::string::npos)
+            prefix = eventName.substr(0, under);
+    }
+
+    if (!prefix.empty())
+    {
+        auto it = resourceRoots_.find(prefix);
+        if (it != resourceRoots_.end()) return it->second;
+
+        std::string provPrefix = "province_" + prefix;
+        it = resourceRoots_.find(provPrefix);
+        if (it != resourceRoots_.end()) return it->second;
+
+        for (const auto& [name, root] : resourceRoots_)
+        {
+            if (name.find(prefix) != std::string::npos)
+                return root;
+        }
+    }
+
+    auto itRp = resourceRoots_.find("Province_RP");
+    if (itRp != resourceRoots_.end()) return itRp->second;
+
+    if (!resourceRoots_.empty())
+        return resourceRoots_.begin()->second;
+
+    return 1;
+}
+
+std::uint32_t MtaClient::ResolveElement(const std::string& elemStr, const std::string& eventName)
+{
+    std::string s = Trim(elemStr);
+    if (s.empty())
+        return FindResourceRoot(eventName);
+
+    if (s == "localPlayer" || s == "localplayer" || s == "me" || s == "player")
+        return localElementId_;
+
+    if (s == "resourceRoot" || s == "resRoot")
+        return FindResourceRoot(eventName);
+
+    if (s.starts_with("resourceRoot:"))
+    {
+        std::string resName = s.substr(13);
+        auto it = resourceRoots_.find(resName);
+        if (it != resourceRoots_.end()) return it->second;
+        return FindResourceRoot(resName);
+    }
+
+    if (s == "root" || s == "rootElement")
+        return 1;
+
+    if (s.starts_with("0x") || s.starts_with("0X"))
+    {
+        try { return static_cast<std::uint32_t>(std::stoul(s, nullptr, 16)); } catch (...) {}
+    }
+
+    bool allDigits = true;
+    for (char c : s) if (!std::isdigit(static_cast<unsigned char>(c))) { allDigits = false; break; }
+    if (allDigits && !s.empty())
+    {
+        try { return static_cast<std::uint32_t>(std::stoul(s)); } catch (...) {}
+    }
+
+    auto it = resourceRoots_.find(s);
+    if (it != resourceRoots_.end())
+        return it->second;
+
+    return FindResourceRoot(eventName);
+}
+
+LuaValue MtaClient::ParseLuaValue(const std::string& token, std::uint32_t defaultElem, std::uint32_t localElem)
+{
+    std::string s = Trim(token);
+    LuaValue v;
+
+    if (s.empty() || s == "nil" || s == "NIL")
+    {
+        v.type = LuaValueType::Nil;
+        return v;
+    }
+
+    if (s == "true" || s == "TRUE")
+    {
+        v.type = LuaValueType::Boolean;
+        v.boolVal = true;
+        return v;
+    }
+
+    if (s == "false" || s == "FALSE")
+    {
+        v.type = LuaValueType::Boolean;
+        v.boolVal = false;
+        return v;
+    }
+
+    if (s == "localPlayer" || s == "me")
+    {
+        v.type = LuaValueType::Element;
+        v.elementVal = localElem;
+        return v;
+    }
+
+    if (s == "resourceRoot")
+    {
+        v.type = LuaValueType::Element;
+        v.elementVal = defaultElem;
+        return v;
+    }
+
+    if (s == "root")
+    {
+        v.type = LuaValueType::Element;
+        v.elementVal = 1;
+        return v;
+    }
+
+    if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\'')))
+    {
+        v.type = LuaValueType::String;
+        v.strVal = StripQuotes(s);
+        return v;
+    }
+
+    if (s.size() >= 2 && s.front() == '{' && s.back() == '}')
+    {
+        v.type = LuaValueType::Table;
+        std::string inner = s.substr(1, s.size() - 2);
+        auto items = SplitArgs(inner);
+        int autoIndex = 1;
+        for (const auto& item : items)
+        {
+            size_t eqPos = FindTopLevelEqual(item);
+            if (eqPos != std::string::npos)
+            {
+                std::string kStr = Trim(item.substr(0, eqPos));
+                std::string vStr = Trim(item.substr(eqPos + 1));
+                if (kStr.size() >= 2 && kStr.front() == '[' && kStr.back() == ']')
+                    kStr = Trim(kStr.substr(1, kStr.size() - 2));
+
+                LuaValue key = ParseLuaValue(kStr, defaultElem, localElem);
+                LuaValue val = ParseLuaValue(vStr, defaultElem, localElem);
+                v.tablePairs.emplace_back(key, val);
+            }
+            else
+            {
+                LuaValue key;
+                key.type = LuaValueType::NumberInt;
+                key.intVal = autoIndex++;
+                LuaValue val = ParseLuaValue(item, defaultElem, localElem);
+                v.tablePairs.emplace_back(key, val);
+            }
+        }
+        return v;
+    }
+
+    if (s.starts_with("0x") || s.starts_with("0X"))
+    {
+        try
+        {
+            v.type = LuaValueType::NumberInt;
+            v.intVal = static_cast<int>(std::stol(s, nullptr, 16));
+            return v;
+        }
+        catch (...) {}
+    }
+
+    bool isInt = true;
+    bool isFloat = false;
+    size_t start = (s.front() == '-' || s.front() == '+') ? 1 : 0;
+    if (start < s.size())
+    {
+        for (size_t i = start; i < s.size(); ++i)
+        {
+            char c = s[i];
+            if (c == '.' && !isFloat)
+            {
+                isFloat = true;
+                isInt = false;
+            }
+            else if (!std::isdigit(static_cast<unsigned char>(c)))
+            {
+                isInt = false;
+                isFloat = false;
+                break;
+            }
+        }
+
+        if (isInt)
+        {
+            try
+            {
+                v.type = LuaValueType::NumberInt;
+                v.intVal = std::stoi(s);
+                return v;
+            }
+            catch (...) {}
+        }
+        else if (isFloat)
+        {
+            try
+            {
+                v.type = LuaValueType::NumberFloat;
+                v.floatVal = std::stod(s);
+                return v;
+            }
+            catch (...) {}
+        }
+    }
+
+    v.type = LuaValueType::String;
+    v.strVal = s;
+    return v;
+}
+
+void MtaClient::StartConsoleThread()
+{
+    if (consoleStarted_)
+        return;
+    consoleStarted_ = true;
+
+    std::cout << "\n=======================================================\n";
+    std::cout << ">>> INTERACTIVE CONSOLE READY!\n";
+    std::cout << ">>> Type trigger commands (e.g. triggerServerEvent(\"...\") or 'help')\n";
+    std::cout << "=======================================================\n\n";
+
+    consoleThread_ = std::thread([this]()
+    {
+        std::string line;
+        while (!stopRequested_)
+        {
+            if (!std::getline(std::cin, line))
+                break;
+
+            std::string trimmed = Trim(line);
+            if (trimmed.empty())
+                continue;
+
+            {
+                std::lock_guard<std::mutex> lock(consoleMutex_);
+                consoleQueue_.push(trimmed);
+            }
+        }
+    });
+    consoleThread_.detach();
+}
+
+void MtaClient::ProcessConsoleCommands()
+{
+    std::string cmd;
+    while (true)
+    {
+        {
+            std::lock_guard<std::mutex> lock(consoleMutex_);
+            if (consoleQueue_.empty())
+                break;
+            cmd = std::move(consoleQueue_.front());
+            consoleQueue_.pop();
+        }
+        ExecuteConsoleCommand(cmd);
+    }
+}
+
+void MtaClient::ExecuteConsoleCommand(const std::string& rawCmd)
+{
+    std::string cmd = Trim(rawCmd);
+    if (cmd.empty())
+        return;
+
+    if (cmd == "exit" || cmd == "quit")
+    {
+        std::cout << "[CONSOLE] Disconnecting and exiting...\n";
+        stopRequested_ = true;
+        return;
+    }
+
+    if (cmd == "help" || cmd == "?")
+    {
+        std::cout << "\n==================================================================\n";
+        std::cout << "           WINTERCAT INTERACTIVE LUA CONSOLE                      \n";
+        std::cout << "==================================================================\n";
+        std::cout << " 1. Direct Lua call (paste from logger or scripts):\n";
+        std::cout << "    triggerServerEvent(\"eventName\", [element], [arg1], [arg2]...)\n";
+        std::cout << "    Examples:\n";
+        std::cout << "      triggerServerEvent(\"radio:xnykuxcazgmqruzg\")\n";
+        std::cout << "      triggerServerEvent(\"boneAttach_requestAttachmentData\", resourceRoot)\n";
+        std::cout << "      triggerServerEvent(\"afktimer:toggleAFK\", resourceRoot, false)\n";
+        std::cout << "      triggerServerEvent(\"onRequestLogin\", localPlayer, \"user\", \"pass\")\n";
+        std::cout << "      triggerServerEvent(\"onNotifyTargetEnabled\", resourceRoot, true, {[1] = \"Categories\"})\n\n";
+        std::cout << " 2. Short CLI syntax:\n";
+        std::cout << "    trigger <eventName> [element] [args...]\n";
+        std::cout << "    Examples:\n";
+        std::cout << "      trigger donate:requestBonus\n";
+        std::cout << "      trigger afktimer:toggleAFK resourceRoot false\n";
+        std::cout << "      trigger aPermissions localPlayer\n\n";
+        std::cout << " 3. Utility commands:\n";
+        std::cout << "    roots / res         - Show all loaded resources & root element IDs\n";
+        std::cout << "    player / me         - Show local player element ID\n";
+        std::cout << "    ac                  - Re-send AC verification table\n";
+        std::cout << "    login <user> <pass> - Trigger login request\n";
+        std::cout << "    exit / quit         - Disconnect and exit\n";
+        std::cout << "==================================================================\n\n";
+        return;
+    }
+
+    if (cmd == "roots" || cmd == "res" || cmd == "resources")
+    {
+        std::cout << "\n=======================================================\n";
+        std::cout << "[CONSOLE] Loaded Resource Roots (" << resourceRoots_.size() << " total):\n";
+        std::cout << "  - localPlayer: netID " << localElementId_ << " (0x" << std::hex << localElementId_ << std::dec << ")\n";
+        for (const auto& [name, rootId] : resourceRoots_)
+        {
+            std::cout << "  - " << name << ": netID " << rootId << " (0x" << std::hex << rootId << std::dec << ")\n";
+        }
+        std::cout << "=======================================================\n\n";
+        return;
+    }
+
+    if (cmd == "player" || cmd == "local" || cmd == "me")
+    {
+        std::cout << "[CONSOLE] localPlayer netID = " << localElementId_ << " (0x" << std::hex << localElementId_ << std::dec << ")\n";
+        return;
+    }
+
+    if (cmd == "ac")
+    {
+        std::cout << "[CONSOLE] Resending AC verification...\n";
+        acVerified_ = false;
+        SendAcVerification();
+        return;
+    }
+
+    if (cmd.starts_with("login "))
+    {
+        auto tokens = SplitArgs(cmd.substr(6));
+        if (tokens.size() >= 2)
+        {
+            std::string user = StripQuotes(tokens[0]);
+            std::string pass = StripQuotes(tokens[1]);
+            std::cout << "[CONSOLE] Sending onRequestLogin with user=" << user << "...\n";
+            TriggerServerEvent("onRequestLogin", localElementId_, {user, pass});
+        }
+        else
+        {
+            std::cout << "[CONSOLE] Usage: login <username> <password>\n";
+        }
+        return;
+    }
+
+    bool isLuaFunc = false;
+    std::string work = cmd;
+    if (work.starts_with("triggerServerEvent") || work.starts_with("TriggerServerEvent"))
+    {
+        isLuaFunc = true;
+        size_t op = work.find('(');
+        size_t cl = work.rfind(')');
+        if (op != std::string::npos && cl != std::string::npos && cl > op)
+            work = work.substr(op + 1, cl - op - 1);
+    }
+    else if (work.starts_with("trigger ") || work.starts_with("send "))
+    {
+        work = work.substr(work.find(' ') + 1);
+    }
+
+    auto tokens = SplitArgs(work);
+    if (tokens.empty())
+        return;
+
+    std::string eventName = StripQuotes(tokens[0]);
+    std::uint32_t elementId = 0;
+    std::vector<LuaValue> args;
+
+    if (isLuaFunc)
+    {
+        if (tokens.size() >= 2)
+        {
+            elementId = ResolveElement(tokens[1], eventName);
+            for (size_t i = 2; i < tokens.size(); ++i)
+                args.push_back(ParseLuaValue(tokens[i], elementId, localElementId_));
+        }
+        else
+        {
+            elementId = ResolveElement("", eventName);
+        }
+    }
+    else
+    {
+        if (tokens.size() >= 2)
+        {
+            const std::string& t1 = tokens[1];
+            if (t1 == "localPlayer" || t1 == "me" || t1 == "player" ||
+                t1 == "resourceRoot" || t1 == "root" ||
+                t1.starts_with("resourceRoot:") ||
+                t1.starts_with("0x") ||
+                resourceRoots_.find(t1) != resourceRoots_.end())
+            {
+                elementId = ResolveElement(t1, eventName);
+                for (size_t i = 2; i < tokens.size(); ++i)
+                    args.push_back(ParseLuaValue(tokens[i], elementId, localElementId_));
+            }
+            else
+            {
+                elementId = ResolveElement("", eventName);
+                for (size_t i = 1; i < tokens.size(); ++i)
+                    args.push_back(ParseLuaValue(tokens[i], elementId, localElementId_));
+            }
+        }
+        else
+        {
+            elementId = ResolveElement("", eventName);
+        }
+    }
+
+    if (eventName == "radio:xnykuxcazgmqruzg" && args.empty())
+    {
+        std::cout << "[CONSOLE] Triggering official AC verification table for radio:xnykuxcazgmqruzg...\n";
+        acVerified_ = false;
+        SendAcVerification();
+        return;
+    }
+
+    std::cout << "[CONSOLE] >>> Sending triggerServerEvent(\"" << eventName << "\", element=" << elementId << ", args=" << args.size() << ")...\n";
+    TriggerServerEventDynamic(eventName, elementId, args);
+}
+
 bool MtaClient::SendAcVerification()
 {
     if (acVerified_)
@@ -939,6 +1608,10 @@ void MtaClient::HandleResourceStart(RakNet::BitStream& payload)
     {
         std::cout << ">>> province_ac resource started, sending AC verification immediately...\n";
         SendAcVerification();
+        std::cout << "\n==================================================================\n";
+        std::cout << ">>> AC VERIFICATION SENT! CONSOLE READY FOR YOUR TRIGGERS\n";
+        std::cout << ">>> Type e.g.: triggerServerEvent(\"...\") or type 'help'\n";
+        std::cout << "==================================================================\n\n";
     }
     else if (resName == "bone_attach" && resourceRootId != 0)
     {

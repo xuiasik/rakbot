@@ -7,8 +7,34 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <mutex>
+#include <queue>
+#include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
+
+enum class LuaValueType
+{
+    Nil,
+    Boolean,
+    NumberInt,
+    NumberFloat,
+    String,
+    Element,
+    Table
+};
+
+struct LuaValue
+{
+    LuaValueType type{LuaValueType::Nil};
+    bool boolVal{false};
+    int intVal{0};
+    double floatVal{0.0};
+    std::string strVal;
+    std::uint32_t elementVal{0};
+    std::vector<std::pair<LuaValue, LuaValue>> tablePairs;
+};
 
 class MtaClient
 {
@@ -46,6 +72,7 @@ private:
     bool TriggerServerEvent(const std::string& eventName, std::uint32_t elementId, const std::vector<std::string>& stringArgs);
     bool TriggerServerEventBool(const std::string& eventName, std::uint32_t elementId, bool boolArg);
     bool TriggerServerEventTable(const std::string& eventName, std::uint32_t elementId, const std::vector<std::pair<std::string, std::string>>& tableEntries);
+    bool TriggerServerEventDynamic(const std::string& eventName, std::uint32_t elementId, const std::vector<LuaValue>& args);
     bool SendPlayerResourceStart(std::uint16_t resourceNetId, std::uint32_t startCounter);
     bool SendAcVerification();
     void HandleLuaEvent(RakNet::BitStream& payload);
@@ -53,6 +80,14 @@ private:
     void SendMaintenance();
     void Trace(const std::vector<std::uint8_t>& packet) const;
     void Fail(const std::string& reason);
+
+    // Interactive Console Methods
+    void StartConsoleThread();
+    void ProcessConsoleCommands();
+    void ExecuteConsoleCommand(const std::string& cmd);
+    std::uint32_t ResolveElement(const std::string& elemStr, const std::string& eventName);
+    std::uint32_t FindResourceRoot(const std::string& eventName);
+    LuaValue ParseLuaValue(const std::string& token, std::uint32_t defaultElem, std::uint32_t localElem);
 
     ClientConfig config_;
     std::function<void()> latentHeaderSent_;
@@ -79,4 +114,10 @@ private:
     std::chrono::steady_clock::time_point spawnPendingSince_{};
     std::atomic<bool> stopRequested_{};
     province::PacketCrypto crypto_{province::Build23093Crypto()};
+
+    // Interactive Console State
+    std::thread consoleThread_;
+    std::mutex consoleMutex_;
+    std::queue<std::string> consoleQueue_;
+    bool consoleStarted_{false};
 };
